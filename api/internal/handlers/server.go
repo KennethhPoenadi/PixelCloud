@@ -93,6 +93,17 @@ func (s *Server) Routes() http.Handler {
 
 				r.Post("/jobs", s.createJob)
 				r.Get("/jobs/{jobID}", s.getJob)
+
+				r.Post("/batches", s.createBatch)
+				r.Get("/batches/{batchID}", s.getBatch)
+				r.Get("/batches/{batchID}/download", s.downloadBatch)
+
+				r.Group(func(r chi.Router) {
+					r.Use(s.requireAPIPlan)
+					r.Get("/api-keys", s.listAPIKeys)
+					r.Post("/api-keys", s.createAPIKey)
+					r.Delete("/api-keys/{keyID}", s.revokeAPIKey)
+				})
 			})
 		})
 	})
