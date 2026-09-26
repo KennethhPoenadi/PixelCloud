@@ -15,6 +15,7 @@ from types import FrameType
 import redis
 
 from worker import metrics
+from worker.cleanup import run_cleanup
 from worker.config import Config
 from worker.db import Database
 from worker.log import configure
@@ -60,6 +61,7 @@ def main() -> None:
 
     group_ready = False
     last_reclaim = 0.0
+    last_cleanup = 0.0
     while not stop.is_set():
         beat.beat()
         try:
@@ -76,6 +78,10 @@ def main() -> None:
                 msg = queue.read(READ_BLOCK_MS)
             if msg is not None:
                 processor.handle(msg)
+            elif time.monotonic() - last_cleanup >= min(cfg.cleanup_interval_seconds, 300):
+                # idle: try the retention job (a Redis lock picks one worker per interval)
+                last_cleanup = time.monotonic()
+                run_cleanup(rdb, db, storage, cfg.node_id, cfg.cleanup_interval_seconds, log)
         except Exception as exc:
             log.error("worker loop error, backing off", error=f"{type(exc).__name__}: {exc}")
             stop.wait(2)
