@@ -1,0 +1,629 @@
+openapi: 3.1.0
+info:
+  title: PixelCloud API
+  version: 1.0.0
+  description: |
+    Photo filter service. Upload an image, submit a filter pipeline as a job,
+    poll the job, then download the result.
+
+    All errors use the same envelope: `{ "error": { "code": "...", "message": "..." } }`.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+  - apiKey: []
+
+tags:
+  - name: auth
+  - name: images
+  - name: presets
+  - name: jobs
+  - name: batches
+  - name: api-keys
+  - name: health
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Liveness" }
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness (Postgres, Redis, MinIO reachable)
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+
+  /plans:
+    get:
+      tags: [auth]
+      summary: List pricing plans
+      security: []
+      responses:
+        "200":
+          description: Plans ordered by price
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Plan" }
+
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Create an account on the Free plan
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 72 }
+                display_name: { type: [string, "null"], maxLength: 60 }
+      responses:
+        "201":
+          description: Account created, session issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: Session issued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /me:
+    get:
+      tags: [auth]
+      summary: Profile, plan and usage this month
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /images:
+    post:
+      tags: [images]
+      summary: Upload an image (JPEG, PNG or WebP)
+      description: Size and resolution are limited by the plan. Metadata (EXIF/GPS) is stripped.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Image" }
+        "413": { $ref: "#/components/responses/Error" }
+        "415": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+    get:
+      tags: [images]
+      summary: List the user's images, newest first
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 24 } }
+        - { name: q, in: query, description: Filename search, schema: { type: string } }
+      responses:
+        "200":
+          description: One page of images
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Image" }
+                  next_cursor: { type: [string, "null"] }
+
+  /images/{imageId}:
+    parameters:
+      - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [images]
+      summary: Image detail with a presigned URL of the original
+      responses:
+        "200":
+          description: Image
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Image" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [images]
+      summary: Delete an image and all of its results
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /presets:
+    get:
+      tags: [presets]
+      summary: System presets followed by the user's custom presets
+      responses:
+        "200":
+          description: Presets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Preset" }
+    post:
+      tags: [presets]
+      summary: Save a custom preset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, pipeline]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 50 }
+                pipeline: { $ref: "#/components/schemas/Pipeline" }
+      responses:
+        "201":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Preset" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /presets/{presetId}:
+    parameters:
+      - { name: presetId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [presets]
+      summary: Delete a custom preset
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /jobs:
+    post:
+      tags: [jobs]
+      summary: Render an image with a pipeline (checks quota, enqueues)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [image_id, pipeline]
+                  properties:
+                    image_id: { type: string, format: uuid }
+                    pipeline: { $ref: "#/components/schemas/Pipeline" }
+                - $ref: "#/components/schemas/OutputOptions"
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /jobs/{jobId}:
+    parameters:
+      - { name: jobId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [jobs]
+      summary: Job status; result URLs once done
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /batches:
+    post:
+      tags: [batches]
+      summary: Apply one pipeline to many images (one job per image)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [image_ids, pipeline]
+                  properties:
+                    image_ids:
+                      type: array
+                      minItems: 1
+                      items: { type: string, format: uuid }
+                    pipeline: { $ref: "#/components/schemas/Pipeline" }
+                - $ref: "#/components/schemas/OutputOptions"
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Batch" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /batches/{batchId}:
+    parameters:
+      - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [batches]
+      summary: Batch progress with per-image status
+      responses:
+        "200":
+          description: Batch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Batch" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /batches/{batchId}/download:
+    parameters:
+      - { name: batchId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [batches]
+      summary: ZIP of all finished results
+      responses:
+        "200":
+          description: ZIP archive
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        "409": { $ref: "#/components/responses/Error" }
+
+  /api-keys:
+    get:
+      tags: [api-keys]
+      summary: List API keys (Business plan)
+      responses:
+        "200":
+          description: Keys (the secret is never returned again)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/APIKey" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [api-keys]
+      summary: Create an API key; the plaintext key is shown once
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: [string, "null"], maxLength: 60 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedAPIKey" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /api-keys/{keyId}:
+    parameters:
+      - { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [api-keys]
+      summary: Revoke an API key
+      responses:
+        "204": { description: Revoked }
+        "404": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorBody" }
+
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_ERROR
+        - UNAUTHORIZED
+        - FORBIDDEN
+        - NOT_FOUND
+        - CONFLICT
+        - QUOTA_EXCEEDED
+        - FILE_TOO_LARGE
+        - UNSUPPORTED_FORMAT
+        - RATE_LIMITED
+        - UNAVAILABLE
+        - INTERNAL
+    ErrorBody:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string }
+
+    Liveness:
+      type: object
+      required: [status, node]
+      properties:
+        status: { type: string }
+        node: { type: string }
+    Readiness:
+      type: object
+      required: [status, node, checks]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        node: { type: string }
+        checks:
+          type: object
+          additionalProperties: { type: string }
+
+    Plan:
+      type: object
+      required: [code, name, monthly_quota, max_file_mb, max_resolution, max_batch_size, watermark, api_access, price_idr]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        monthly_quota: { type: [integer, "null"], description: null means unlimited }
+        max_file_mb: { type: integer }
+        max_resolution: { type: integer }
+        max_batch_size: { type: integer }
+        watermark: { type: boolean }
+        api_access: { type: boolean }
+        price_idr: { type: integer }
+    User:
+      type: object
+      required: [id, email, display_name, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        display_name: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    Usage:
+      type: object
+      required: [period, jobs_count, bytes_in]
+      properties:
+        period: { type: string, format: date-time }
+        jobs_count: { type: integer }
+        bytes_in: { type: integer }
+    Session:
+      type: object
+      required: [token, expires_at, user]
+      properties:
+        token: { type: string }
+        expires_at: { type: string, format: date-time }
+        user: { $ref: "#/components/schemas/User" }
+    Me:
+      type: object
+      required: [user, plan, usage]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        plan: { $ref: "#/components/schemas/Plan" }
+        usage: { $ref: "#/components/schemas/Usage" }
+
+    Image:
+      type: object
+      required: [id, filename, mime_type, size_bytes, width, height, created_at, expires_at, url, latest_job]
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        mime_type: { type: string, enum: [image/jpeg, image/png, image/webp] }
+        size_bytes: { type: integer }
+        width: { type: integer }
+        height: { type: integer }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        url: { type: string, description: Presigned URL of the original (short-lived) }
+        latest_job:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, status, result_url]
+              properties:
+                id: { type: string, format: uuid }
+                status: { $ref: "#/components/schemas/JobStatus" }
+                result_url: { type: [string, "null"] }
+
+    Operation:
+      type: object
+      description: One step of a pipeline. Fields depend on `op`.
+      required: [op]
+      properties:
+        op:
+          type: string
+          enum: [preset, brightness, contrast, saturation, temperature, blur, sharpen, vignette, rotate, flip, resize]
+        name:
+          type: string
+          enum: [grayscale, sepia, vintage, warm, cool, vivid, noir, fade, invert]
+          description: preset only
+        value:
+          type: number
+          description: |
+            brightness/contrast/saturation 0..2, temperature -100..100, blur 0..20,
+            sharpen 0..3, vignette 0..1
+        angle: { type: integer, enum: [90, 180, 270], description: rotate only }
+        direction: { type: string, enum: [h, v], description: flip only }
+        max_width: { type: integer, minimum: 1, maximum: 10000, description: resize only }
+        max_height: { type: integer, minimum: 1, maximum: 10000, description: resize only }
+    Pipeline:
+      type: object
+      required: [version, operations]
+      properties:
+        version: { type: integer, enum: [1] }
+        operations:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/Operation" }
+
+    Preset:
+      type: object
+      required: [id, name, pipeline, is_system, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        pipeline: { $ref: "#/components/schemas/Pipeline" }
+        is_system: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    OutputFormat:
+      type: string
+      enum: [jpeg, png, webp]
+    OutputOptions:
+      type: object
+      properties:
+        output_format: { $ref: "#/components/schemas/OutputFormat" }
+        output_quality: { type: integer, minimum: 1, maximum: 100, default: 90 }
+
+    JobStatus:
+      type: string
+      enum: [queued, processing, done, failed]
+    Job:
+      type: object
+      required: [id, image_id, batch_id, status, pipeline, output_format, output_quality, attempts, worker_id, error, created_at, started_at, finished_at, result_url, download_url]
+      properties:
+        id: { type: string, format: uuid }
+        image_id: { type: string, format: uuid }
+        batch_id: { type: [string, "null"], format: uuid }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        pipeline: { $ref: "#/components/schemas/Pipeline" }
+        output_format: { $ref: "#/components/schemas/OutputFormat" }
+        output_quality: { type: integer }
+        attempts: { type: integer }
+        worker_id: { type: [string, "null"], description: Worker node that processed the job }
+        error: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        result_url: { type: [string, "null"] }
+        download_url: { type: [string, "null"] }
+
+    BatchJob:
+      type: object
+      required: [id, image_id, filename, status, error, worker_id, result_url, download_url]
+      properties:
+        id: { type: string, format: uuid }
+        image_id: { type: string, format: uuid }
+        filename: { type: string }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        error: { type: [string, "null"] }
+        worker_id: { type: [string, "null"] }
+        result_url: { type: [string, "null"] }
+        download_url: { type: [string, "null"] }
+    Batch:
+      type: object
+      required: [id, pipeline, total_jobs, queued, processing, done, failed, finished, created_at, jobs]
+      properties:
+        id: { type: string, format: uuid }
+        pipeline: { $ref: "#/components/schemas/Pipeline" }
+        total_jobs: { type: integer }
+        queued: { type: integer }
+        processing: { type: integer }
+        done: { type: integer }
+        failed: { type: integer }
+        finished: { type: boolean }
+        created_at: { type: string, format: date-time }
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/BatchJob" }
+
+    APIKey:
+      type: object
+      required: [id, label, last_used_at, revoked_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: [string, "null"] }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+    CreatedAPIKey:
+      allOf:
+        - $ref: "#/components/schemas/APIKey"
+        - type: object
+          required: [key]
+          properties:
+            key: { type: string, description: Plaintext key, shown only once }
