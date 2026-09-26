@@ -9,6 +9,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/apierr"
+	"github.com/KennethhPoenadi/PixelCloud/api/internal/auth"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/config"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/db"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/health"
@@ -27,6 +28,7 @@ type Server struct {
 	storage *storage.Storage
 	metrics *metrics.Metrics
 	health  *health.Checker
+	tokens  *auth.Tokens
 }
 
 type Deps struct {
@@ -50,6 +52,7 @@ func New(d Deps) *Server {
 		storage: d.Storage,
 		metrics: d.Metrics,
 		health:  d.Health,
+		tokens:  auth.NewTokens(d.Config.JWTSecret, d.Config.JWTTTL),
 	}
 }
 
@@ -69,6 +72,21 @@ func (s *Server) Routes() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.health.Gate)
+
+			r.Get("/plans", s.listPlans)
+			r.Post("/auth/register", s.register)
+			r.Post("/auth/login", s.login)
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.authenticate)
+
+				r.Get("/me", s.me)
+
+				r.Post("/images", s.uploadImage)
+				r.Get("/images", s.listImages)
+				r.Get("/images/{imageID}", s.getImage)
+				r.Delete("/images/{imageID}", s.deleteImage)
+			})
 		})
 	})
 
