@@ -12,6 +12,7 @@ import { Slider } from '@/components/ui/slider'
 import { useLowRes } from '@/hooks/useImage'
 import { api, saveFile, type OutputFormat } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { stableUrl } from '@/lib/stableUrl'
 import { cn } from '@/lib/cn'
 import { errorMessage } from '@/lib/errors'
 import {
@@ -256,7 +257,11 @@ export function BatchView() {
               >
                 <div className="flex aspect-[4/3] items-center justify-center bg-canvas">
                   {j.result_url ? (
-                    <img src={j.result_url} alt={j.filename} className="size-full object-contain" />
+                    <img
+                      src={stableUrl(`result:${j.id}`, j.result_url)}
+                      alt={j.filename}
+                      className="size-full object-contain"
+                    />
                   ) : (
                     <StatusBadge status={j.status} />
                   )}

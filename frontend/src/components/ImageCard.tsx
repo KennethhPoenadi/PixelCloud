@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import type { Image } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { formatBytes } from '@/lib/format'
+import { stableUrl } from '@/lib/stableUrl'
 import { StatusBadge } from './StatusBadge'
 
 interface ImageCardProps {
@@ -13,7 +14,10 @@ interface ImageCardProps {
 }
 
 export function ImageCard({ image, selected, onToggleSelect, onDelete }: ImageCardProps) {
-  const thumb = image.latest_job?.result_url ?? image.url
+  const job = image.latest_job
+  const thumb = job?.result_url
+    ? stableUrl(`result:${job.id}`, job.result_url)
+    : stableUrl(`image:${image.id}`, image.url)
   return (
     <div
       className={cn(
