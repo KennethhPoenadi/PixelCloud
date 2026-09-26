@@ -78,3 +78,7 @@ failover: ## HA demo: load test + stop api-1 + crash worker-1 mid-job
 .PHONY: test-e2e
 test-e2e: ## Playwright E2E against the running stack
 	cd frontend && PIXELCLOUD_URL=http://localhost:$${HTTP_PORT:-8080} npx playwright test
+
+.PHONY: test-integration
+test-integration: ## API integration test against the running stack
+	cd api && PIXELCLOUD_URL=http://localhost:$${HTTP_PORT:-8080} go test -count=1 -tags integration ./test/integration/
