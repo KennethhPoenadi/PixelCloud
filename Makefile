@@ -63,3 +63,18 @@ lint-api:
 .PHONY: lint-worker
 lint-worker: $(WORKER_VENV)
 	cd worker && .venv/bin/ruff check . && .venv/bin/ruff format --check . && .venv/bin/mypy
+
+.PHONY: loadtest
+loadtest: ## Run the k6 load test against the running stack (DURATION=3m VUS=10)
+	USERS=$${VUS:-10} ./scripts/prepare-loadtest-user.sh
+	docker run --rm --network pixelcloud_default -v "$$PWD":/work -w /work/scripts \
+		-e BASE_URL=http://nginx -e DURATION=$${DURATION:-3m} -e VUS=$${VUS:-10} \
+		grafana/k6:latest run loadtest.js
+
+.PHONY: failover
+failover: ## HA demo: load test + stop api-1 + crash worker-1 mid-job
+	./scripts/failover-demo.sh
+
+.PHONY: test-e2e
+test-e2e: ## Playwright E2E against the running stack
+	cd frontend && PIXELCLOUD_URL=http://localhost:$${HTTP_PORT:-8080} npx playwright test
