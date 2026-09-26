@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          working-directory: api
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  worker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest -q
+      - run: uv export --frozen --no-dev --no-hashes -o /tmp/requirements.txt && uv run pip-audit -r /tmp/requirements.txt
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx openapi-typescript ../api/openapi.yaml -o /tmp/schema.d.ts && npx prettier /tmp/schema.d.ts > /tmp/schema.fmt.ts && diff -q /tmp/schema.fmt.ts src/lib/schema.d.ts
+        name: Generated API types are up to date
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  images:
+    runs-on: ubuntu-latest
+    needs: [api, worker, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose build
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [images]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: cp .env.example .env
+      - run: docker compose up -d --build
+        timeout-minutes: 15
+      - name: Wait until both API nodes are ready behind Nginx
+        run: |
+          for i in $(seq 1 90); do
+            curl -fs http://localhost:8080/api/v1/readyz && exit 0
+            sleep 2
+          done
+          exit 1
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npx playwright test
+        working-directory: frontend
+        env:
+          PIXELCLOUD_URL: http://localhost:8080
+      - if: failure()
+        run: docker compose logs --tail 200 api-1 api-2 worker-1 worker-2 nginx
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/test-results
