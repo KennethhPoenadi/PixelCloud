@@ -18,6 +18,7 @@ import (
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/apierr"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/db"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/httpx"
+	"github.com/KennethhPoenadi/PixelCloud/api/internal/quota"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/upload"
 )
 
@@ -187,7 +188,7 @@ func (s *Server) uploadImage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := s.store.AddBytesIn(dbCtx, p.UserID, db.PeriodStart(time.Now()), int64(len(clean))); err != nil {
+	if err := s.store.AddBytesIn(dbCtx, p.UserID, quota.PeriodStart(time.Now()), int64(len(clean))); err != nil {
 		httpx.Logger(r.Context()).Warn("usage bytes_in not recorded", "err", err)
 	}
 

@@ -13,6 +13,7 @@ import (
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/auth"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/db"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/httpx"
+	"github.com/KennethhPoenadi/PixelCloud/api/internal/quota"
 )
 
 type registerRequest struct {
@@ -145,7 +146,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	usage, err := s.store.UsageForPeriod(ctx, p.UserID, db.PeriodStart(time.Now()))
+	usage, err := s.store.UsageForPeriod(ctx, p.UserID, quota.PeriodStart(time.Now()))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

@@ -86,6 +86,9 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/images", s.listImages)
 				r.Get("/images/{imageID}", s.getImage)
 				r.Delete("/images/{imageID}", s.deleteImage)
+
+				r.Post("/jobs", s.createJob)
+				r.Get("/jobs/{jobID}", s.getJob)
 			})
 		})
 	})

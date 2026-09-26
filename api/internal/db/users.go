@@ -122,12 +122,6 @@ func (s *Store) ListPlans(ctx context.Context) ([]Plan, error) {
 	return out, rows.Err()
 }
 
-// PeriodStart returns the first day of the month (UTC) that t falls in.
-func PeriodStart(t time.Time) time.Time {
-	t = t.UTC()
-	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
-}
-
 func (s *Store) UsageForPeriod(ctx context.Context, userID uuid.UUID, period time.Time) (Usage, error) {
 	u := Usage{Period: period}
 	err := s.Pool.QueryRow(ctx, `
