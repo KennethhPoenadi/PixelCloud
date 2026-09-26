@@ -87,6 +87,10 @@ func (s *Server) Routes() http.Handler {
 				r.Get("/images/{imageID}", s.getImage)
 				r.Delete("/images/{imageID}", s.deleteImage)
 
+				r.Get("/presets", s.listPresets)
+				r.Post("/presets", s.createPreset)
+				r.Delete("/presets/{presetID}", s.deletePreset)
+
 				r.Post("/jobs", s.createJob)
 				r.Get("/jobs/{jobID}", s.getJob)
 			})
