@@ -132,7 +132,7 @@ export function Gallery() {
           <p className="text-accent-r">{errorMessage(images.error)}</p>
         ) : items.length === 0 ? (
           <div className="pixel-grid flex flex-col items-center gap-3 rounded-[var(--radius-card)] border border-border py-16 text-center">
-            <LogoMark className="h-10 w-20 opacity-80" />
+            <LogoMark className="h-10 w-24 opacity-80" />
             <p className="font-display text-lg font-semibold">
               {q ? 'Tidak ada foto yang cocok' : 'Upload foto pertamamu'}
             </p>

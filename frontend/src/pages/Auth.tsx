@@ -66,7 +66,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'register' }) {
     <div className="pixel-grid flex min-h-dvh items-center justify-center px-4 py-10">
       <Card className="w-full max-w-sm">
         <Link to="/" className="mb-6 flex flex-col items-center gap-3">
-          <LogoMark className="h-8 w-16" />
+          <LogoMark className="h-8 w-[77px]" />
           <span className="font-display text-xl font-bold">PixelCloud</span>
         </Link>
         <h1 className="mb-1 text-center text-2xl">{isLogin ? 'Masuk' : 'Buat akun'}</h1>
