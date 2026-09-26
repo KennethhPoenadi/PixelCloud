@@ -10,6 +10,11 @@ access_log /dev/stdout json;
 server_tokens off;
 client_max_body_size 60m;
 
+# Per-IP rate limits (the API also limits per user, shared through Redis).
+limit_req_zone $binary_remote_addr zone=api_ip:10m rate=50r/s;
+limit_req_zone $binary_remote_addr zone=auth_ip:10m rate=10r/m;
+limit_req_status 429;
+
 # Docker's embedded DNS; `resolve` below re-resolves upstreams so a stopped
 # container drops out and nginx still starts when a node is down.
 resolver 127.0.0.11 valid=5s ipv6=off;
@@ -29,6 +34,31 @@ upstream minio {
 server {
     listen 80;
     server_name _;
+    root /usr/share/nginx/html;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Shared proxy settings for the API locations.
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Request-ID $request_id;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 2s;
+    proxy_send_timeout 300s;
+    proxy_read_timeout 300s;
+    # Fail over to the other node when one is down or draining (503 from the
+    # readiness gate is returned before any work is done, so retrying is safe).
+    proxy_next_upstream error timeout http_502 http_503 non_idempotent;
+    proxy_next_upstream_tries 2;
+
+    error_page 429 = @rate_limited;
+    location @rate_limited {
+        default_type application/json;
+        return 429 '{"error":{"code":"RATE_LIMITED","message":"too many requests from this IP"}}';
+    }
 
     location = /nginx-health {
         access_log off;
@@ -36,43 +66,45 @@ server {
         return 200 "ok\n";
     }
 
-    location /api/ {
+    # Tighter limit on credential endpoints (brute force).
+    location /api/v1/auth/ {
+        limit_req zone=auth_ip burst=20 nodelay;
         proxy_pass http://api;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host $host;
-        proxy_set_header X-Request-ID $request_id;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
-        proxy_connect_timeout 2s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-
-        # Fail over to the other node when one is down or draining (503 from the
-        # readiness gate is returned before any work is done, so retrying is safe).
-        proxy_next_upstream error timeout http_502 http_503 non_idempotent;
-        proxy_next_upstream_tries 2;
-
-        add_header X-Upstream $upstream_addr always;
+    location /api/ {
+        limit_req zone=api_ip burst=100 nodelay;
+        proxy_pass http://api;
     }
 
     # Presigned MinIO URLs are signed for this host with the bucket as the first
     # path segment, so the Host header must be passed through unchanged.
     location /${MINIO_BUCKET}/ {
+        limit_except GET HEAD { deny all; }
         proxy_pass http://minio;
-        proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $http_host;
         proxy_buffering off;
-        proxy_connect_timeout 2s;
         proxy_read_timeout 120s;
-        limit_except GET HEAD { deny all; }
     }
 
+    # hashed build assets never change
+    location /assets/ {
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "public, immutable";
+        expires 1y;
+        try_files $uri =404;
+    }
+
+    # SPA: unknown paths fall back to index.html, which must never be cached
     location / {
-        root /usr/share/nginx/html;
+        include /etc/nginx/snippets/security-headers.conf;
+        add_header Cache-Control "no-cache";
         try_files $uri /index.html;
+    }
+
+    # /metrics is never proxied; make that explicit instead of serving the SPA
+    location = /metrics {
+        return 404;
     }
 }
