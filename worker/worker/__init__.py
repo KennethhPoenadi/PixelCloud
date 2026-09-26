@@ -1,0 +1,1 @@
+"""PixelCloud image processing worker."""
