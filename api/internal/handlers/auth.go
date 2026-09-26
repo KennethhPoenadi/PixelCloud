@@ -165,9 +165,27 @@ func (s *Server) listPlans(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": plans})
 }
 
-// authenticate accepts a Bearer JWT and stores the Principal in the context.
+// authenticate accepts a Bearer JWT, or an X-API-Key on plans with API access,
+// and stores the Principal in the context.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if key := r.Header.Get("X-API-Key"); key != "" {
+			ctx, cancel := context.WithTimeout(r.Context(), db.QueryTimeout)
+			userID, allowed, err := s.store.UserByAPIKey(ctx, auth.HashAPIKey(key))
+			cancel()
+			switch {
+			case errors.Is(err, db.ErrNotFound):
+				httpx.WriteError(w, r, apierr.New(apierr.Unauthorized, "API key is invalid or revoked"))
+			case err != nil:
+				httpx.WriteError(w, r, err)
+			case !allowed:
+				httpx.WriteError(w, r, apierr.New(apierr.Forbidden, "API access requires the Business plan"))
+			default:
+				s.serveAs(w, r, next, auth.Principal{UserID: userID, ViaAPIKey: true})
+			}
+			return
+		}
+
 		header := r.Header.Get("Authorization")
 		token, ok := strings.CutPrefix(header, "Bearer ")
 		if !ok || token == "" {
