@@ -15,7 +15,7 @@ from types import FrameType
 import structlog
 from PIL import Image, UnidentifiedImageError
 
-from worker import metrics, pipeline
+from worker import metrics, pipeline, watermark
 from worker.config import Config
 from worker.db import ClaimedJob, Database
 from worker.queue import JobQueue, Message
@@ -169,6 +169,8 @@ class Processor:
             raise PermanentError(f"cannot decode image: {exc}") from exc
         try:
             out = pipeline.run(img, job.pipeline)
+            if job.watermark:
+                out = watermark.apply(out)
             body, mime, ext = pipeline.encode(out, job.output_format, job.output_quality)
         except pipeline.PipelineError as exc:
             raise PermanentError(f"invalid pipeline: {exc}") from exc
