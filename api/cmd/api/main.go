@@ -85,6 +85,10 @@ func run() error {
 	go bootstrap(ctx, logger, &bootstrapped, st, q)
 
 	m := metrics.New(cfg.NodeID)
+	m.Register(cfg.NodeID, metrics.NewQueueCollector(func(ctx context.Context) (int64, int64, error) {
+		st, err := q.Stats(ctx)
+		return st.Length, st.Pending, err
+	}))
 	checker := health.New(cfg.NodeID, map[string]health.CheckFunc{
 		"postgres": store.Ping,
 		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
