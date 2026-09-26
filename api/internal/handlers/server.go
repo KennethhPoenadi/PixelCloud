@@ -4,6 +4,7 @@ package handlers
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
@@ -16,6 +17,7 @@ import (
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/httpx"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/metrics"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/queue"
+	"github.com/KennethhPoenadi/PixelCloud/api/internal/ratelimit"
 	"github.com/KennethhPoenadi/PixelCloud/api/internal/storage"
 )
 
@@ -29,6 +31,7 @@ type Server struct {
 	metrics *metrics.Metrics
 	health  *health.Checker
 	tokens  *auth.Tokens
+	limiter *ratelimit.Limiter
 }
 
 type Deps struct {
@@ -43,7 +46,7 @@ type Deps struct {
 }
 
 func New(d Deps) *Server {
-	return &Server{
+	s := &Server{
 		cfg:     d.Config,
 		log:     d.Logger,
 		store:   d.Store,
@@ -54,6 +57,10 @@ func New(d Deps) *Server {
 		health:  d.Health,
 		tokens:  auth.NewTokens(d.Config.JWTSecret, d.Config.JWTTTL),
 	}
+	if d.Config.UserRateLimitPerMin > 0 && d.Redis != nil {
+		s.limiter = ratelimit.New(d.Redis, d.Config.UserRateLimitPerMin, time.Minute)
+	}
+	return s
 }
 
 func (s *Server) Routes() http.Handler {
@@ -78,7 +85,7 @@ func (s *Server) Routes() http.Handler {
 			r.Post("/auth/login", s.login)
 
 			r.Group(func(r chi.Router) {
-				r.Use(s.authenticate)
+				r.Use(s.authenticate, s.rateLimitUser)
 
 				r.Get("/me", s.me)
 
