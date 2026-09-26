@@ -21,21 +21,32 @@ type Checker struct {
 	checks   map[string]CheckFunc
 	interval time.Duration
 	timeout  time.Duration
+	// A dependency must fail this many times in a row before the node reports
+	// not ready, so one slow probe does not flap the node out of the pool.
+	failureThreshold int
 
 	ready    atomic.Bool
 	draining atomic.Bool
 	mu       sync.RWMutex
 	status   map[string]string
+	failures map[string]int
 }
 
 func New(nodeID string, checks map[string]CheckFunc) *Checker {
-	return &Checker{
-		nodeID:   nodeID,
-		checks:   checks,
-		interval: 2 * time.Second,
-		timeout:  time.Second,
-		status:   map[string]string{},
+	c := &Checker{
+		nodeID:           nodeID,
+		checks:           checks,
+		interval:         2 * time.Second,
+		timeout:          2 * time.Second,
+		failureThreshold: 3,
+		status:           map[string]string{},
+		failures:         map[string]int{},
 	}
+	// Start not ready until each check has passed once.
+	for name := range checks {
+		c.failures[name] = c.failureThreshold
+	}
+	return c
 }
 
 // Run evaluates all checks until ctx is cancelled.
@@ -54,8 +65,7 @@ func (c *Checker) Run(ctx context.Context) {
 }
 
 func (c *Checker) evaluate(ctx context.Context) {
-	status := make(map[string]string, len(c.checks))
-	ok := true
+	results := make(map[string]string, len(c.checks))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for name, check := range c.checks {
@@ -68,16 +78,25 @@ func (c *Checker) evaluate(ctx context.Context) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			status[name] = res
-			if res != "ok" {
-				ok = false
-			}
+			results[name] = res
 		})
 	}
 	wg.Wait()
+
 	c.mu.Lock()
-	c.status = status
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	ok := true
+	for name, res := range results {
+		if res == "ok" {
+			c.failures[name] = 0
+		} else {
+			c.failures[name]++
+		}
+		if c.failures[name] >= c.failureThreshold {
+			ok = false
+		}
+	}
+	c.status = results
 	c.ready.Store(ok)
 }
 
